@@ -9,7 +9,7 @@
   <p>เปิดไมค์แล้วคุยกับเพื่อนทันที!</p>
 
   <script>
-    const ws = new WebSocket("ws://" + location.host);
+    const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host);
     const pc = new RTCPeerConnection();
     
     navigator.mediaDevices.getUserMedia({
