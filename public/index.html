@@ -2,70 +2,267 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Ultra Fast Voice Chat</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f0f0f0;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .status {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 5px;
+      font-weight: bold;
+    }
+    .status.connected {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .status.disconnected {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .status.connecting {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeaa7;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 5px;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .controls {
+      text-align: center;
+      margin: 20px 0;
+    }
+  </style>
 </head>
 <body>
-  <h1>🎤 Voice Chat</h1>
-  <p>เปิดไมค์แล้วคุยกับเพื่อนทันที!</p>
+  <div class="container">
+    <h1>🎤 Voice Chat</h1>
+    <p>เปิดไมค์แล้วคุยกับเพื่อนทันที! (รองรับ HTTPS)</p>
+    
+    <div id="status" class="status disconnected">กำลังเชื่อมต่อ...</div>
+    
+    <div class="controls">
+      <button id="startBtn" onclick="startVoiceChat()">เริ่มการสนทนา</button>
+      <button id="stopBtn" onclick="stopVoiceChat()" disabled>หยุดการสนทนา</button>
+    </div>
+    
+    <div id="log"></div>
+  </div>
 
   <script>
-    const ws = new WebSocket("ws://" + location.host);
-    const pc = new RTCPeerConnection();
+    let ws = null;
+    let pc = null;
+    let localStream = null;
+    let isConnected = false;
     
-    navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false
-      }
-    }).then(stream => {
-      const localAudio = document.createElement("audio");
-      localAudio.srcObject = stream;
-      localAudio.autoplay = true;
-      document.body.appendChild(localAudio);
-
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
-      return pc.createOffer();
-    }).then(offer => {
-      return pc.setLocalDescription(offer).then(() => {
-        ws.send(JSON.stringify({ type: "offer", sdp: offer }));
-      });
-    });
-
-    ws.onmessage = async (message) => {
-      const data = JSON.parse(message.data);
-      if (data.type === "offer") {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        const stream = await navigator.mediaDevices.getUserMedia({
+    const statusDiv = document.getElementById('status');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const logDiv = document.getElementById('log');
+    
+    // ตรวจสอบว่าอยู่บน HTTPS หรือไม่
+    const isSecure = location.protocol === 'https:';
+    const wsProtocol = isSecure ? 'wss:' : 'ws:';
+    
+    function log(message) {
+      console.log(message);
+      logDiv.innerHTML += `<p>${new Date().toLocaleTimeString()}: ${message}</p>`;
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+    
+    function updateStatus(message, className) {
+      statusDiv.textContent = message;
+      statusDiv.className = `status ${className}`;
+    }
+    
+    async function startVoiceChat() {
+      try {
+        startBtn.disabled = true;
+        updateStatus('กำลังขอสิทธิ์ไมโครโฟน...', 'connecting');
+        
+        // ขอสิทธิ์ไมโครโฟน
+        localStream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 44100
           }
         });
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        ws.send(JSON.stringify({ type: "answer", sdp: answer }));
-      } else if (data.type === "answer") {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-      } else if (data.candidate) {
-        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        
+        log('ได้รับสิทธิ์ไมโครโฟนแล้ว');
+        
+        // เชื่อมต่อ WebSocket
+        connectWebSocket();
+        
+      } catch (error) {
+        log(`ข้อผิดพลาด: ${error.message}`);
+        updateStatus('ไม่สามารถเข้าถึงไมโครโฟนได้', 'disconnected');
+        startBtn.disabled = false;
       }
-    };
-
-    pc.ontrack = (event) => {
-      const audio = document.createElement("audio");
-      audio.srcObject = event.streams[0];
-      audio.autoplay = true;
-      document.body.appendChild(audio);
-    };
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        ws.send(JSON.stringify({ candidate: event.candidate }));
+    }
+    
+    function connectWebSocket() {
+      const wsUrl = `${wsProtocol}//${location.host}`;
+      log(`กำลังเชื่อมต่อ: ${wsUrl}`);
+      
+      ws = new WebSocket(wsUrl);
+      
+      ws.onopen = () => {
+        log('เชื่อมต่อ WebSocket สำเร็จ');
+        updateStatus('เชื่อมต่อแล้ว - พร้อมคุย!', 'connected');
+        isConnected = true;
+        stopBtn.disabled = false;
+        setupWebRTC();
+      };
+      
+      ws.onclose = () => {
+        log('WebSocket ถูกปิด');
+        updateStatus('การเชื่อมต่อถูกตัด', 'disconnected');
+        isConnected = false;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+      };
+      
+      ws.onerror = (error) => {
+        log(`WebSocket ข้อผิดพลาด: ${error}`);
+        updateStatus('เชื่อมต่อไม่สำเร็จ', 'disconnected');
+      };
+      
+      ws.onmessage = handleWebSocketMessage;
+    }
+    
+    function setupWebRTC() {
+      pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+      });
+      
+      // เพิ่ม local stream
+      if (localStream) {
+        localStream.getTracks().forEach(track => {
+          pc.addTrack(track, localStream);
+        });
       }
-    };
+      
+      pc.ontrack = (event) => {
+        log('รับเสียงจากอีกฝ่าย');
+        const audio = document.createElement("audio");
+        audio.srcObject = event.streams[0];
+        audio.autoplay = true;
+        audio.volume = 1.0;
+        document.body.appendChild(audio);
+      };
+      
+      pc.onicecandidate = (event) => {
+        if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ 
+            type: 'ice-candidate',
+            candidate: event.candidate 
+          }));
+        }
+      };
+      
+      pc.onconnectionstatechange = () => {
+        log(`WebRTC สถานะ: ${pc.connectionState}`);
+        if (pc.connectionState === 'connected') {
+          updateStatus('เชื่อมต่อเสียงสำเร็จ!', 'connected');
+        }
+      };
+    }
+    
+    async function handleWebSocketMessage(message) {
+      try {
+        const data = JSON.parse(message.data);
+        
+        if (data.type === 'offer') {
+          log('รับ offer จากอีกฝ่าย');
+          await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          ws.send(JSON.stringify({ 
+            type: 'answer', 
+            answer: answer 
+          }));
+          
+        } else if (data.type === 'answer') {
+          log('รับ answer จากอีกฝ่าย');
+          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+          
+        } else if (data.type === 'ice-candidate') {
+          log('รับ ICE candidate');
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        }
+      } catch (error) {
+        log(`ข้อผิดพลาดในการประมวลผล: ${error.message}`);
+      }
+    }
+    
+    function stopVoiceChat() {
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+      }
+      
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+      
+      // ลบ audio elements
+      document.querySelectorAll('audio').forEach(audio => audio.remove());
+      
+      updateStatus('หยุดการสนทนาแล้ว', 'disconnected');
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      logDiv.innerHTML = '';
+      log('หยุดการทำงานทั้งหมดแล้ว');
+    }
+    
+    // Auto-connect เมื่อโหลดหน้า
+    window.addEventListener('load', () => {
+      log('โหลดหน้าเว็บแล้ว');
+      if (isSecure) {
+        log('ใช้งานบน HTTPS - พร้อมใช้งาน');
+      } else {
+        log('ใช้งานบน HTTP - อาจมีข้อจำกัดในการใช้ไมโครโฟน');
+      }
+    });
   </script>
 </body>
 </html>
