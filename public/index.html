@@ -14,9 +14,9 @@
     
     navigator.mediaDevices.getUserMedia({
       audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true   
       }
     }).then(stream => {
       const localAudio = document.createElement("audio");
@@ -38,9 +38,9 @@
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
           }
         });
         stream.getTracks().forEach(track => pc.addTrack(track, stream));
