@@ -24,6 +24,13 @@ wss.on("connection", (ws) => {
   ws.on("close", () => {
     clients = clients.filter((c) => c !== ws);
   });
+
+  ws.onopen = () => {
+    console.log("WebSocket connected");
+  };
+  ws.onerror = (err) => {
+    alert("WebSocket error: " + err.message);
+  };
 });
 
 // ให้ client เข้าเว็บได้
